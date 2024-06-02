@@ -33,6 +33,25 @@ async function run() {
     await client.connect();
     console.log(`MongoDB Connection is successfull!`.bgGreen.black);
 
+    // User-Collection
+    const userCollection = client.db("NanoTasker").collection("userCollection");
+
+    // Create user
+    app.post("/users", async (req, res) => {
+      const userInfo = req.body;
+      const email = userInfo.email;
+      const query = { email: email };
+
+      // Validation email already exits
+      const isExits = await userCollection.findOne(query);
+      if (isExits) {
+        return res.send({ message: "Email already exits!" });
+      } else {
+        const result = await userCollection.insertOne(userInfo);
+        res.send(result);
+      }
+    });
+
     // Test api
     app.get("/", (req, res) => {
       res.send(`NanoTasker server is running on port ${port}`);
