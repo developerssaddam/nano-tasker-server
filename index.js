@@ -136,8 +136,8 @@ async function run() {
       res.send(result);
     });
 
-    // Update task creator user total coin when create a new task
-    app.put("/users/updatecoin/task/create", async (req, res) => {
+    // Update task creator totalCoin when create and delete an task
+    app.put("/users/updatecoin/task", async (req, res) => {
       const updatedData = req.body;
       const { email, updatedCoin } = updatedData;
       const query = { email: email };
@@ -174,6 +174,14 @@ async function run() {
 
       // Now find data and update
       const result = await taskCollection.updateOne(query, updateDoc);
+      res.send(result);
+    });
+
+    // Delete an task
+    app.delete("/task/delete/:id", async (req, res) => {
+      const { id } = req.params;
+      const query = { _id: new ObjectId(id) };
+      const result = await taskCollection.deleteOne(query);
       res.send(result);
     });
 
