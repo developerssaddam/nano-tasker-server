@@ -2,7 +2,7 @@ const express = require("express");
 const dotenv = require("dotenv").config();
 const colors = require("colors");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
 const mongoURI = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.flkt4kr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -25,10 +25,21 @@ app.use(
 );
 
 // tokenVerify
-const tokenVerify = (req, res, next) => {
+const tokenVerify = async (req, res, next) => {
   const token = req.headers.authorization.split(" ")[1];
-  console.log(token);
-  next();
+  // validation
+  if (!token) {
+    return res.status(401).send({ message: "Unauthorized access!" });
+  }
+  // now verify token
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(403).send({ message: "Forbidden!" });
+    } else {
+      req.email = decoded;
+      next();
+    }
+  });
 };
 
 // Create a MongoClient for connection mongoDB
@@ -82,20 +93,6 @@ async function run() {
       res.send(result);
     });
 
-    // Update task creator user total coin when create a new task
-    app.put("/users/taskcreator", async (req, res) => {
-      const updatedData = req.body;
-      const { email, updatedCoin } = updatedData;
-      const query = { email: email };
-      const updateDoc = {
-        $set: {
-          totalCoin: updatedCoin,
-        },
-      };
-      const result = await userCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
-
     // Create user
     app.post("/users", async (req, res) => {
       const userInfo = req.body;
@@ -117,9 +114,66 @@ async function run() {
      *  ====== x ==========
      */
 
-    app.post("/task/create", async (req, res) => {
+    // Get all task by creator email
+    app.get("/all/task/mycreated", tokenVerify, async (req, res) => {
+      const tokenEmail = req.email.email;
+      const email = req.query.email;
+
+      // validate token mail
+      if (tokenEmail !== email) {
+        return res.status(401).send({ message: "Unauthorize-access!" });
+      }
+
+      const query = { creator_email: email };
+      const result = await taskCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    // Create a newTask
+    app.post("/task/create", tokenVerify, async (req, res) => {
       const newTask = req.body;
       const result = await taskCollection.insertOne(newTask);
+      res.send(result);
+    });
+
+    // Update task creator user total coin when create a new task
+    app.put("/users/updatecoin/task/create", async (req, res) => {
+      const updatedData = req.body;
+      const { email, updatedCoin } = updatedData;
+      const query = { email: email };
+      const updateDoc = {
+        $set: {
+          totalCoin: updatedCoin,
+        },
+      };
+      const result = await userCollection.updateOne(query, updateDoc);
+      res.send(result);
+    });
+
+    // Get an single task.
+    app.get("/task/:id", async (req, res) => {
+      const { id } = req.params;
+      const query = { _id: new ObjectId(id) };
+      const result = await taskCollection.findOne(query);
+      res.send(result);
+    });
+
+    // Update an single task
+    app.patch("/task/update/:id", async (req, res) => {
+      const { id } = req.params;
+      const updatedData = req.body;
+      const query = { _id: new ObjectId(id) };
+
+      const updateDoc = {
+        $set: {
+          title: updatedData.title,
+          details: updatedData.details,
+          submissionInfo: updatedData.submissionInfo,
+        },
+      };
+
+      // Now find data and update
+      const result = await taskCollection.updateOne(query, updateDoc);
       res.send(result);
     });
 
