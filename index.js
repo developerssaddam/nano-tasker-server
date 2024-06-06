@@ -5,6 +5,7 @@ const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
 const mongoURI = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.flkt4kr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // Init Express
 const app = express();
@@ -78,6 +79,9 @@ async function run() {
     // User-Collection
     const userCollection = client.db("NanoTasker").collection("userCollection");
     const taskCollection = client.db("NanoTasker").collection("taskCollection");
+    const paymentCollection = client
+      .db("NanoTasker")
+      .collection("paymentCollection");
 
     // Get all users
     app.get("/users", async (req, res) => {
@@ -136,7 +140,7 @@ async function run() {
       res.send(result);
     });
 
-    // Update task creator totalCoin when create and delete an task
+    // Update task creator totalCoin when create and delete an task and purchase coin
     app.put("/users/updatecoin/task", async (req, res) => {
       const updatedData = req.body;
       const { email, updatedCoin } = updatedData;
@@ -182,6 +186,50 @@ async function run() {
       const { id } = req.params;
       const query = { _id: new ObjectId(id) };
       const result = await taskCollection.deleteOne(query);
+      res.send(result);
+    });
+
+    /*
+     *    Payment related api
+     *  ========== x ===========
+     */
+
+    // Create stripe payment intent
+    app.post("/create-payment-intent", async (req, res) => {
+      const { amount } = req.body;
+      const payableAmount = parseInt(amount) * 100;
+
+      // Create payment intent
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: payableAmount,
+        currency: "usd",
+        payment_method_types: ["card"],
+      });
+
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
+
+    // Get all payment data by email
+    app.get("/payment", tokenVerify, async (req, res) => {
+      const email = req.query.email;
+      const tokenEmail = req.email.email;
+      const query = { email: email };
+
+      // validate token mail
+      if (tokenEmail !== email) {
+        return res.status(401).send({ message: "Unauthorize-access!" });
+      }
+
+      const result = await paymentCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    // Save payment data to payment collection
+    app.post("/payment", tokenVerify, async (req, res) => {
+      const paymentInfo = req.body;
+      const result = await paymentCollection.insertOne(paymentInfo);
       res.send(result);
     });
 
