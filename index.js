@@ -79,6 +79,10 @@ async function run() {
     // User-Collection
     const userCollection = client.db("NanoTasker").collection("userCollection");
     const taskCollection = client.db("NanoTasker").collection("taskCollection");
+    const submissionCollection = client
+      .db("NanoTasker")
+      .collection("submissionCollection");
+
     const paymentCollection = client
       .db("NanoTasker")
       .collection("paymentCollection");
@@ -114,7 +118,31 @@ async function run() {
     });
 
     /*
-     *      TaskCreator api
+     *     Worker-api
+     *  ====== x ==========
+     */
+    // Get all task.
+    app.get("/alltask", async (req, res) => {
+      const result = await taskCollection.find().toArray();
+      res.send(result);
+    });
+
+    // Get single task.
+    app.get("/task/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await taskCollection.findOne(query);
+      res.send(result);
+    });
+
+    app.post("/submission/create", async (req, res) => {
+      const submissionDetails = req.body;
+      const result = await submissionCollection.insertOne(submissionDetails);
+      res.send(result);
+    });
+
+    /*
+     *   TaskCreator api
      *  ====== x ==========
      */
 
