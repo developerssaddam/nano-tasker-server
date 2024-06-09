@@ -35,7 +35,7 @@ const tokenVerify = async (req, res, next) => {
   // now verify token
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
-      return res.status(403).send({ message: "Forbidden!" });
+      return res.status(400).send({ message: "Forbidden!" });
     } else {
       req.email = decoded;
       next();
@@ -57,6 +57,20 @@ async function run() {
     await client.connect();
     console.log(`MongoDB Connection is successfull!`.bgGreen.black);
 
+    // Collections
+    const userCollection = client.db("NanoTasker").collection("userCollection");
+    const taskCollection = client.db("NanoTasker").collection("taskCollection");
+    const withdrawCollection = client
+      .db("NanoTasker")
+      .collection("withdrawCollection");
+    const submissionCollection = client
+      .db("NanoTasker")
+      .collection("submissionCollection");
+
+    const paymentCollection = client
+      .db("NanoTasker")
+      .collection("paymentCollection");
+
     /*
      *      Auth api
      *  ====== x ==========
@@ -76,16 +90,41 @@ async function run() {
       res.send({ token });
     });
 
-    // User-Collection
-    const userCollection = client.db("NanoTasker").collection("userCollection");
-    const taskCollection = client.db("NanoTasker").collection("taskCollection");
-    const submissionCollection = client
-      .db("NanoTasker")
-      .collection("submissionCollection");
+    // varifyAdmin
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.email.email;
+      const query = { email: email };
+      const getUser = await userCollection.findOne(query);
+      const isAdmin = getUser.role === "Admin";
+      if (!isAdmin) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+      next();
+    };
 
-    const paymentCollection = client
-      .db("NanoTasker")
-      .collection("paymentCollection");
+    // varifyTaskCreator
+    const verifyTaskCreator = async (req, res, next) => {
+      const email = req.email.email;
+      const query = { email: email };
+      const getUser = await userCollection.findOne(query);
+      const isTaskCreator = getUser.role === "TaskCreator";
+      if (!isTaskCreator) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+      next();
+    };
+
+    // varifyWorker
+    const verifyWorker = async (req, res, next) => {
+      const email = req.email.email;
+      const query = { email: email };
+      const getUser = await userCollection.findOne(query);
+      const isWorker = getUser.role === "Worker";
+      if (!isWorker) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+      next();
+    };
 
     // Get all users
     app.get("/users", async (req, res) => {
@@ -122,7 +161,7 @@ async function run() {
      *  ====== x ==========
      */
     // Get all task.
-    app.get("/alltask", async (req, res) => {
+    app.get("/alltask", tokenVerify, verifyWorker, async (req, res) => {
       const result = await taskCollection.find().toArray();
       res.send(result);
     });
@@ -149,12 +188,75 @@ async function run() {
       }
     });
 
-    // Save data when an worker submission an single task
-    app.post("/submission/create", tokenVerify, async (req, res) => {
-      const submissionDetails = req.body;
-      const result = await submissionCollection.insertOne(submissionDetails);
-      res.send(result);
+    // Get all submissiondata in this worker where are status is approve only
+    app.get("/my/submission/approve", tokenVerify, async (req, res) => {
+      const email = req.query.email;
+      const query = { worker_email: email };
+      const result = await submissionCollection.find(query).toArray();
+
+      const approveSubmission = result.filter(
+        (data) => data.status === "Approve"
+      );
+      res.send(approveSubmission);
     });
+
+    // Save data when an worker submission an single task
+    app.post(
+      "/submission/create",
+      tokenVerify,
+      verifyWorker,
+      async (req, res) => {
+        const submissionDetails = req.body;
+        const result = await submissionCollection.insertOne(submissionDetails);
+        res.send(result);
+      }
+    );
+
+    // Worker withdraw api
+    app.post(
+      "/withdraw/worker",
+      tokenVerify,
+      verifyWorker,
+      async (req, res) => {
+        const withdrawInfo = req.body;
+        const result = await withdrawCollection.insertOne(withdrawInfo);
+        res.status(201).send(result);
+      }
+    );
+
+    // Get worker stats data.
+    app.get(
+      "/worker/stats/:email",
+      tokenVerify,
+      verifyWorker,
+      async (req, res) => {
+        const { email } = req.params;
+        const query = { email: email };
+        const submissionQuery = { worker_email: email };
+
+        const currentUser = await userCollection.findOne(query);
+        const totalCoin = currentUser?.totalCoin;
+
+        const workerTotalSubmission = await submissionCollection
+          .find(submissionQuery)
+          .toArray();
+        const totalSubmission = workerTotalSubmission.length;
+
+        const submissionApprove = workerTotalSubmission.filter(
+          (item) => item.status === "Approve"
+        );
+        const totalSubmissionApprove = submissionApprove.reduce(
+          (current, item) => current + item.amount,
+          0
+        );
+
+        res.send([
+          { name: "AvailableCoin", value: totalCoin },
+          { name: "TotalSubmission", value: totalSubmission },
+          { name: "TotalEarning", value: totalSubmissionApprove },
+        ]);
+      }
+    );
 
     /*
      *   TaskCreator api
@@ -162,43 +264,58 @@ async function run() {
      */
 
     // Get all task by creator email
-    app.get("/all/task/mycreated", tokenVerify, async (req, res) => {
-      const tokenEmail = req.email.email;
-      const email = req.query.email;
+    app.get(
+      "/all/task/mycreated",
+      tokenVerify,
+      verifyTaskCreator,
+      async (req, res) => {
+        const tokenEmail = req.email.email;
+        const email = req.query.email;
 
-      // validate token mail
-      if (tokenEmail !== email) {
-        return res.status(401).send({ message: "Unauthorize-access!" });
+        // validate token mail
+        if (tokenEmail !== email) {
+          return res.status(401).send({ message: "Unauthorize-access!" });
+        }
+
+        const query = { creator_email: email };
+        const result = await taskCollection.find(query).toArray();
+        res.send(result);
       }
-
-      const query = { creator_email: email };
-      const result = await taskCollection.find(query).toArray();
-      res.send(result);
-    });
+    );
 
     // Create a newTask
-    app.post("/task/create", tokenVerify, async (req, res) => {
-      const newTask = req.body;
-      const result = await taskCollection.insertOne(newTask);
-      res.send(result);
-    });
+    app.post(
+      "/task/create",
+      tokenVerify,
+      verifyTaskCreator,
+      async (req, res) => {
+        const newTask = req.body;
+        const result = await taskCollection.insertOne(newTask);
+        res.send(result);
+      }
+    );
 
     // Update task creator totalCoin when create and delete an task and purchase coin
-    app.put("/users/updatecoin/task", async (req, res) => {
-      const updatedData = req.body;
-      const { email, updatedCoin } = updatedData;
-      const query = { email: email };
-      const updateDoc = {
-        $set: {
-          totalCoin: updatedCoin,
-        },
-      };
-      const result = await userCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
+    app.put(
+      "/users/updatecoin/task",
+      tokenVerify,
+      verifyTaskCreator,
+      async (req, res) => {
+        const updatedData = req.body;
+        const { email, updatedCoin } = updatedData;
+        const query = { email: email };
+        const updateDoc = {
+          $set: {
+            totalCoin: updatedCoin,
+          },
+        };
+        const result = await userCollection.updateOne(query, updateDoc);
+        res.send(result);
+      }
+    );
 
     // Get an single task.
-    app.get("/task/:id", async (req, res) => {
+    app.get("/task/:id", tokenVerify, async (req, res) => {
       const { id } = req.params;
       const query = { _id: new ObjectId(id) };
       const result = await taskCollection.findOne(query);
@@ -206,54 +323,70 @@ async function run() {
     });
 
     // Update an single task
-    app.patch("/task/update/:id", async (req, res) => {
-      const { id } = req.params;
-      const updatedData = req.body;
-      const query = { _id: new ObjectId(id) };
+    app.patch(
+      "/task/update/:id",
+      tokenVerify,
+      verifyTaskCreator,
+      async (req, res) => {
+        const { id } = req.params;
+        const updatedData = req.body;
+        const query = { _id: new ObjectId(id) };
 
-      const updateDoc = {
-        $set: {
-          title: updatedData.title,
-          details: updatedData.details,
-          submissionInfo: updatedData.submissionInfo,
-        },
-      };
+        const updateDoc = {
+          $set: {
+            title: updatedData.title,
+            details: updatedData.details,
+            submissionInfo: updatedData.submissionInfo,
+          },
+        };
 
-      // Now find data and update
-      const result = await taskCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
+        // Now find data and update
+        const result = await taskCollection.updateOne(query, updateDoc);
+        res.send(result);
+      }
+    );
 
     // Delete an task
-    app.delete("/task/delete/:id", async (req, res) => {
-      const { id } = req.params;
-      const query = { _id: new ObjectId(id) };
-      const result = await taskCollection.deleteOne(query);
-      res.send(result);
-    });
+    app.delete(
+      "/task/delete/:id",
+      tokenVerify,
+      verifyTaskCreator,
+      async (req, res) => {
+        const { id } = req.params;
+        const query = { _id: new ObjectId(id) };
+        const result = await taskCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
 
     // Get all pending submission data where is match taskCreator email
-    app.get("/mytask/worker/submission", tokenVerify, async (req, res) => {
-      const tokenEmail = req.email.email;
-      const email = req.query.email;
+    app.get(
+      "/mytask/worker/submission/status/pending",
+      tokenVerify,
+      verifyTaskCreator,
+      tokenVerify,
+      async (req, res) => {
+        const tokenEmail = req.email.email;
+        const email = req.query.email;
 
-      // validate token mail
-      if (tokenEmail !== email) {
-        return res.status(401).send({ message: "Unauthorize-access!" });
+        // validate token mail
+        if (tokenEmail !== email) {
+          return res.status(401).send({ message: "Unauthorize-access!" });
+        }
+
+        const query = { creator_email: email };
+
+        // Get all submission data from submissionCollection by creator_email match.
+        const myTask = await submissionCollection.find(query).toArray();
+
+        // Now filter data which is status is pending;
+        const result = myTask.filter((task) => task.status === "Pending");
+        res.send(result);
       }
-
-      const query = { creator_email: email };
-
-      // Get all submission data from submissionCollection by creator_email match.
-      const myTask = await submissionCollection.find(query).toArray();
-
-      // Now filter data which is status is pending;
-      const result = myTask.filter((task) => task.status === "Pending");
-      res.send(result);
-    });
+    );
 
     // Get single SubmissionData by id (id get query)
-    app.get("/single/submission/data", async (req, res) => {
+    app.get("/single/submission/data", tokenVerify, async (req, res) => {
       const id = req.query.id;
       const query = { _id: new ObjectId(id) };
       const result = await submissionCollection.findOne(query);
@@ -263,6 +396,8 @@ async function run() {
     // Update worker totalCoin and submission status approved;
     app.patch(
       "/update/worker/totalcoin/and/submission/approve",
+      tokenVerify,
+      verifyTaskCreator,
       async (req, res) => {
         const data = req.body;
         const { _id, amount, worker_email } = data;
@@ -297,16 +432,166 @@ async function run() {
     );
 
     // Update worker submission status to rejected
-    app.patch("/update/worker/status/rejected", async (req, res) => {
-      const { id } = req.body;
+    app.patch(
+      "/update/worker/status/rejected",
+      tokenVerify,
+      verifyTaskCreator,
+      async (req, res) => {
+        const { id } = req.body;
+        const query = { _id: new ObjectId(id) };
+        const updatedDoc = {
+          $set: {
+            status: "Rejected",
+          },
+        };
+        const result = await submissionCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      }
+    );
+
+    // TaskCreator states
+    app.get(
+      "/taskcreator/stats/:email",
+      tokenVerify,
+      verifyTaskCreator,
+      async (req, res) => {
+        const { email } = req.params;
+        const coinQuery = { email: email };
+        const currentUser = await userCollection.findOne(coinQuery);
+        const coin = currentUser?.totalCoin;
+
+        const pendingQuery = { creator_email: email };
+        const totalSubmission = await submissionCollection
+          .find(pendingQuery)
+          .toArray();
+        const totalPending = totalSubmission.filter(
+          (submissionData) => submissionData.status === "Pending"
+        );
+
+        const totalApprove = totalSubmission.filter(
+          (submissionData) => submissionData.status === "Approve"
+        );
+
+        const totalPayUser = totalApprove.reduce(
+          (current, item) => current + item.amount,
+          0
+        );
+
+        res.send([
+          { name: "AvailableCoin", value: coin },
+          { name: "PendingTask", value: totalPending },
+          { name: "TotalPaymentPaid", value: totalPayUser },
+        ]);
+      }
+    );
+
+    /*
+     *    Admin api
+     *  ===== x ====
+     */
+
+    // Get all withdraw data
+    app.get("/withdraw", tokenVerify, verifyAdmin, async (req, res) => {
+      const email = req.query.email;
+      const tokenEmail = req.email.email;
+      if (email !== tokenEmail) {
+        return res.status(401).send({ message: "Unauthorize-access!" });
+      }
+      const result = await withdrawCollection.find().toArray();
+      res.status(200).send(result);
+    });
+
+    // delete an withdraw data when payment success btn clicked
+    app.delete(
+      "/withdraw/remove/:id",
+      tokenVerify,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        const query = { _id: new ObjectId(id) };
+        const result = await withdrawCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
+
+    // Update user coin.
+    app.put(
+      "/withdraw/workercoin/update",
+      tokenVerify,
+      verifyAdmin,
+      async (req, res) => {
+        const data = req.body;
+        const query = { email: data.worker_email };
+        const currentWorker = await userCollection.findOne(query);
+        const updatedDoc = {
+          $set: {
+            totalCoin: currentWorker.totalCoin - data.withdraw_coin,
+          },
+        };
+        const result = await userCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      }
+    );
+
+    // Delete User by admin
+    app.delete(
+      "/user/delete/byadmin",
+      tokenVerify,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.query.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await userCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
+
+    // update user role
+    app.put(
+      "/update/userrole/byadmin",
+      tokenVerify,
+      verifyAdmin,
+      async (req, res) => {
+        const data = req.body;
+        const query = { _id: new ObjectId(data.id) };
+        const updatedDoc = {
+          $set: {
+            role: data.value,
+          },
+        };
+        const result = await userCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      }
+    );
+
+    // Delete an task.
+    app.delete("/task/:id", tokenVerify, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
       const query = { _id: new ObjectId(id) };
-      const updatedDoc = {
-        $set: {
-          status: "Rejected",
-        },
-      };
-      const result = await submissionCollection.updateOne(query, updatedDoc);
+      const result = await taskCollection.deleteOne(query);
       res.send(result);
+    });
+
+    // Get admin states data.
+    app.get("/admin/stats", tokenVerify, verifyAdmin, async (req, res) => {
+      const usersData = await userCollection.find().toArray();
+      const totalUsers = usersData.length;
+      const totalCoin = usersData.reduce(
+        (current, user) => current + user.totalCoin,
+        0
+      );
+
+      const paymentsData = await paymentCollection.find().toArray();
+      const totalPayment = paymentsData.reduce(
+        (current, paymentItem) => current + paymentItem.payableAmoutn,
+        0
+      );
+
+      res.send([
+        { name: "TotalUser", value: totalUsers },
+        { name: "TotalCoin", value: totalCoin },
+        { name: "TotalPayment", value: totalPayment },
+      ]);
     });
 
     /*
@@ -332,7 +617,7 @@ async function run() {
     });
 
     // Get all payment data by email
-    app.get("/payment", tokenVerify, async (req, res) => {
+    app.get("/payment", tokenVerify, verifyTaskCreator, async (req, res) => {
       const email = req.query.email;
       const tokenEmail = req.email.email;
       const query = { email: email };
@@ -347,7 +632,7 @@ async function run() {
     });
 
     // Save payment data to payment collection
-    app.post("/payment", tokenVerify, async (req, res) => {
+    app.post("/payment", tokenVerify, verifyTaskCreator, async (req, res) => {
       const paymentInfo = req.body;
       const result = await paymentCollection.insertOne(paymentInfo);
       res.send(result);
