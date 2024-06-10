@@ -122,7 +122,7 @@ async function run() {
       const email = req.email.email;
       const query = { email: email };
       const getUser = await userCollection.findOne(query);
-      const isWorker = getUser.role === "Worker";
+      const isWorker = getUser?.role === "Worker";
       if (!isWorker) {
         return res.status(403).send({ message: "Forbidden access" });
       }
@@ -226,6 +226,28 @@ async function run() {
         res.status(201).send(result);
       }
     );
+
+    // Get myAll-Submission
+    app.get("/my/all/submission", async (req, res) => {
+      const email = req.query.email;
+      const query = { worker_email: email };
+      const totalItems = await submissionCollection.countDocuments(query);
+      res.send({ totalItems });
+    });
+
+    // Pagination api
+    app.get("/nanotasker/pagination", async (req, res) => {
+      const email = req.query.email;
+      const query = { worker_email: email };
+      const page = parseInt(req.query.page);
+      const size = parseInt(req.query.size);
+      const result = await submissionCollection
+        .find(query)
+        .skip(page * size)
+        .limit(size)
+        .toArray();
+      res.send(result);
+    });
 
     // Get worker stats data.
     app.get(
@@ -417,6 +439,7 @@ async function run() {
         const increaseWorkerCoin = {
           $set: {
             totalCoin: worker?.totalCoin + amount,
+            total_task_completetion: worker?.total_task_completetion + 1,
           },
         };
 
@@ -654,6 +677,18 @@ async function run() {
       const paymentInfo = req.body;
       const result = await paymentCollection.insertOne(paymentInfo);
       res.send(result);
+    });
+    /*
+     *    Top Earner api
+     *  ====== x ========
+     */
+    app.get("/users/topearner", async (req, res) => {
+      const allUsers = await userCollection.find().toArray();
+      const workers = allUsers.filter((user) => user.role === "Worker");
+      const topearnerUsers = workers.sort((a, b) => {
+        return b.totalCoin - a.totalCoin;
+      });
+      res.send(topearnerUsers.slice(0, 6));
     });
 
     // Test api
