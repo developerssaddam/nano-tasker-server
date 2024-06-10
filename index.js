@@ -58,6 +58,9 @@ async function run() {
     console.log(`MongoDB Connection is successfull!`.bgGreen.black);
 
     // Collections
+    const notificationCollection = client
+      .db("NanoTasker")
+      .collection("notificationCollection");
     const userCollection = client.db("NanoTasker").collection("userCollection");
     const taskCollection = client.db("NanoTasker").collection("taskCollection");
     const withdrawCollection = client
@@ -161,7 +164,7 @@ async function run() {
      *  ====== x ==========
      */
     // Get all task.
-    app.get("/alltask", tokenVerify, verifyWorker, async (req, res) => {
+    app.get("/alltask", tokenVerify, async (req, res) => {
       const result = await taskCollection.find().toArray();
       res.send(result);
     });
@@ -449,6 +452,21 @@ async function run() {
       }
     );
 
+    // Set a notification object when an task creator approve an worker submission.
+    app.post("/notification", async (req, res) => {
+      const newNotification = req.body;
+      const result = await notificationCollection.insertOne(newNotification);
+      res.send(result);
+    });
+
+    // Get all notification data.
+    app.get("/notification", async (req, res) => {
+      const email = req.query.email;
+      const query = { ToEmail: email };
+      const result = await notificationCollection.find(query).toArray();
+      res.send(result);
+    });
+
     // TaskCreator states
     app.get(
       "/taskcreator/stats/:email",
@@ -479,7 +497,7 @@ async function run() {
 
         res.send([
           { name: "AvailableCoin", value: coin },
-          { name: "PendingTask", value: totalPending },
+          { name: "PendingTask", value: totalPending.length },
           { name: "TotalPaymentPaid", value: totalPayUser },
         ]);
       }
